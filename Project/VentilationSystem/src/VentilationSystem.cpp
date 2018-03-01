@@ -19,6 +19,7 @@
 #include <cr_section_macros.h>
 
 #include "ModbusMaster.h"
+#include "ITMwraper.h"
 
 using namespace std;
 
@@ -137,6 +138,33 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 	}
 }
 
+void readPressure() {
+	uint8_t result_buffer[3];
+	uint8_t command_buffer[] = {0xf1};
+
+	//	Read status
+	SetupXferRecAndExecute(
+		I2C_PRESSURE_ADDR_7BIT,
+		command_buffer, 1,
+		result_buffer, 3);
+
+	if (i2cmXferRec.status != I2CM_STATUS_OK) {
+		printf("Error %d reading status.\r\n", i2cmXferRec.status);
+		return;
+	}
+
+	char printf_buffer[512];
+	sprintf(printf_buffer, "Pressure value %x, %x %x %d %d %d\r\n",
+			result_buffer[0],
+			result_buffer[1],
+			result_buffer[2],
+			*((int16_t*)result_buffer),
+			*((int16_t*)result_buffer+1),
+			(int16_t)(result_buffer[1] << 8 + result_buffer[0]));
+	ITM_wraper itm;
+	itm.print(printf_buffer);
+}
+
 bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
 	int ctr;
@@ -162,6 +190,8 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	} while(ctr < 20 && !atSetpoint);
 
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
+
+	readPressure();
 
 	return atSetpoint;
 }
@@ -247,6 +277,7 @@ int main(void) {
 #endif
 #endif
 
+	printf("hello!\r\n");
 	/* Setup I2C pin muxing */
 	Init_I2C_PinMux();
 
@@ -265,5 +296,5 @@ int main(void) {
 	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
 
 	//May be 19999 is the maximum (for the fan to run without stop)
-	runFan(19999);
+	runFan(19000);
 }
