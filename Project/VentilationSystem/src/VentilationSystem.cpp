@@ -20,6 +20,8 @@
 
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
+#include "I2C.h"
+#include <string>
 
 using namespace std;
 
@@ -56,73 +58,6 @@ uint32_t millis() {
 	return systicks;
 }
 
-
-// I2C setup
-
-/* I2CM transfer record */
-static I2CM_XFER_T  i2cmXferRec;
-/* I2C clock is set to 1.8MHz */
-#define I2C_CLK_DIVIDER         (40)
-/* 100KHz I2C bit-rate */
-#define I2C_BITRATE         (100000)
-/* Standard I2C mode */
-#define I2C_MODE    (0)
-
-#if defined(BOARD_NXP_LPCXPRESSO_1549)
-/** 7-bit I2C addresses of Temperature Sensor */
-#define I2C_PRESSURE_ADDR_7BIT  (0x40)
-#endif
-
-/* Initializes pin muxing for I2C interface - note that SystemInit() may
-   already setup your pin muxing at system startup */
-static void Init_I2C_PinMux(void)
-{
-#if defined(BOARD_KEIL_MCB1500)||defined(BOARD_NXP_LPCXPRESSO_1549)
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 22, IOCON_DIGMODE_EN | I2C_MODE);
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 23, IOCON_DIGMODE_EN | I2C_MODE);
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
-#else
-#error "No I2C Pin Muxing defined for this example"
-#endif
-}
-
-/* Setup I2C handle and parameters */
-static void setupI2CMaster()
-{
-	/* Enable I2C clock and reset I2C peripheral - the boot ROM does not
-	   do this */
-	Chip_I2C_Init(LPC_I2C0);
-
-	/* Setup clock rate for I2C */
-	Chip_I2C_SetClockDiv(LPC_I2C0, I2C_CLK_DIVIDER);
-
-	/* Setup I2CM transfer rate */
-	Chip_I2CM_SetBusSpeed(LPC_I2C0, I2C_BITRATE);
-
-	/* Enable Master Mode */
-	Chip_I2CM_Enable(LPC_I2C0);
-}
-
-static void SetupXferRecAndExecute(uint8_t devAddr,
-								   uint8_t *txBuffPtr,
-								   uint16_t txSize,
-								   uint8_t *rxBuffPtr,
-								   uint16_t rxSize)
-{
-	/* Setup I2C transfer record */
-	i2cmXferRec.slaveAddr = devAddr;
-	i2cmXferRec.status = 0;
-	i2cmXferRec.txSz = txSize;
-	i2cmXferRec.rxSz = rxSize;
-	i2cmXferRec.txBuff = txBuffPtr;
-	i2cmXferRec.rxBuff = rxBuffPtr;
-
-	Chip_I2CM_XferBlocking(LPC_I2C0, &i2cmXferRec);
-}
-
-// end I2C setup
-
 void printRegister(ModbusMaster& node, uint16_t reg) {
 	uint8_t result;
 	// slave: read 16-bit registers starting at reg to RX buffer
@@ -139,31 +74,28 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 }
 
 void readPressure() {
-	uint8_t result_buffer[3];
-	uint8_t command_buffer[] = {0xf1};
-
-	//	Read status
-	SetupXferRecAndExecute(
-		I2C_PRESSURE_ADDR_7BIT,
-		command_buffer, 1,
-		result_buffer, 3);
-
-	if (i2cmXferRec.status != I2CM_STATUS_OK) {
-		printf("Error %d reading status.\r\n", i2cmXferRec.status);
-		return;
-	}
-
-	char printf_buffer[512];
-	sprintf(printf_buffer, "Pressure value %x, %x %x %d %d %d\r\n",
-			result_buffer[0],
-			result_buffer[1],
-			result_buffer[2],
-			*((int16_t*)result_buffer),
-			*((int16_t*)result_buffer+1),
-			(int16_t)(result_buffer[1] << 8 + result_buffer[0]));
 	ITM_wraper itm;
-	itm.print(printf_buffer);
+	I2C i2c(0, 100000);
+
+
+	uint8_t pressureData[3];
+	uint8_t readPressureCmd = 0xF1;
+	int16_t pressure = 0;
+
+
+	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
+		pressure = (pressureData[0] << 8) | pressureData[1];
+		pressure = pressure*0.95/240;
+		itm.print("Pressure data: ");
+		itm.print(pressure);
+		itm.print("\n");
+	}
+	else {
+		itm.print("Error reading pressure.\r\n");
+	}
+	Sleep(1000);
 }
+
 
 bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
@@ -278,19 +210,10 @@ int main(void) {
 #endif
 
 	printf("hello!\r\n");
-	/* Setup I2C pin muxing */
-	Init_I2C_PinMux();
-
-	/* Allocate I2C handle, setup I2C rate, and initialize I2C
-	   clocking */
-	setupI2CMaster();
-
-	/* Disable the interrupt for the I2C */
-	NVIC_DisableIRQ(I2C0_IRQn);
 
 	/* The sysTick counter only has 24 bits of precision, so it will
-				   overflow quickly with a fast core clock. You can alter the
-				   sysTick divider to generate slower sysTick clock rates. */
+	overflow quickly with a fast core clock. You can alter the
+	sysTick divider to generate slower sysTick clock rates. */
 	Chip_Clock_SetSysTickClockDiv(1);
 
 	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
