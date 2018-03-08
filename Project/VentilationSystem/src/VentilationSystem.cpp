@@ -133,6 +133,16 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	return atSetpoint;
 }
 
+int32_t setSpeed(int32_t newSpeed) {
+	if (newSpeed > 20000) {
+		return 20000;
+	} else if (newSpeed < 0) {
+		return 0;
+	} else {
+		return newSpeed;
+	}
+}
+
 int main(void) {
 
 #if defined (__USE_LPCOPEN)
@@ -239,7 +249,7 @@ int main(void) {
 		while (btn3State) {
 			btn3State = btn3.read();
 			if (!btn3State) {
-				speed+=100;
+				speed = setSpeed(speed - 1000);
 			}
 		}
 
@@ -247,7 +257,7 @@ int main(void) {
 		while (btn4State) {
 			btn4State = btn4.read();
 			if (!btn4State) {
-				speed-=100;
+				speed = setSpeed(speed + 1000);
 			}
 		}
 
