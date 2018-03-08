@@ -21,7 +21,8 @@
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
 #include "I2C.h"
-#include <string>
+#include "LiquidCrystal.h"
+
 
 using namespace std;
 
@@ -93,7 +94,6 @@ void readPressure() {
 	else {
 		itm.print("Error reading pressure.\r\n");
 	}
-	Sleep(1000);
 }
 
 
@@ -101,7 +101,8 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
 	int ctr;
 	bool atSetpoint;
-	const int delay = 500;
+	//const int delay = 500;
+	const int delay = 1;
 
 	node.writeSingleRegister(1, freq); // set motor frequency
 
@@ -123,22 +124,31 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
 
-	readPressure();
-
 	return atSetpoint;
 }
 
-/*
- * Running the fan
- * Input: speed of the fan. Range from 0 (0Hz) to 20000 (50Hz). 400units/Hz
- * Output: void
- *
- * The fan need the Sleep function and other Modbus library to work
- *
- *
- */
+int main(void) {
 
-void runFan(int speed) {
+#if defined (__USE_LPCOPEN)
+	// Read clock settings and update SystemCoreClock variable
+	SystemCoreClockUpdate();
+#if !defined(NO_BOARD_LIB)
+	// Set up and initialize all required blocks and
+	// functions related to the board hardware
+	Board_Init();
+	// Set the LED to the state of "On"
+	Board_LED_Set(0, true);
+#endif
+#endif
+
+	/* The sysTick counter only has 24 bits of precision, so it will
+	overflow quickly with a fast core clock. You can alter the
+	sysTick divider to generate slower sysTick clock rates. */
+	Chip_Clock_SetSysTickClockDiv(1);
+
+	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
+
+	//***********START For setFrequency***********
 	ModbusMaster node(2); // Create modbus object that connects to slave id 2
 
 	node.begin(9600); // set transmission rate - other parameters are set inside the object and can't be changed here
@@ -164,13 +174,69 @@ void runFan(int speed) {
 	//       but we take the easy way out and just wait a while and hope that everything goes well
 
 	printRegister(node, 3); // for debugging
-
 	int j = 0;
-	//const uint16_t fa[20] = { 1000, 2000, 3000, 3500, 4000, 5000, 7000, 8000, 8300, 10000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000 };
+	//***********END For setFrequency***********
 
+	uint16_t speed = 10000;
+
+	//From left to right:
+	DigitalIOPin btn1(0,0,true, true, true);
+	DigitalIOPin btn2(1,3,true, true, true);
+	DigitalIOPin btn3(0,16,true, true, true);
+	DigitalIOPin btn4(0,10,true, true, true);
+
+	bool btn1State,btn2State,btn3State,btn4State = false;
+
+	//***********LCD***********
+	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
+	DigitalIOPin rs(0,8,false, true, false);
+	DigitalIOPin en(1,6,false, true, false);
+	DigitalIOPin d4(1,8,false, true, false);
+	DigitalIOPin d5(0,5,false, true, false);
+	DigitalIOPin d6(0,6,false, true, false);
+	DigitalIOPin d7(0,7,false, true, false);
+	LiquidCrystal lcd(&rs, &en, &d4, &d5, &d6, &d7);
+	// configure display geometry
+	lcd.begin(16, 2);
+	lcd.clear();
+
+	char buffer[20] = {0};
 	while (1) {
-		uint8_t result;
+		btn1State = btn1.read();
+		while (btn1State) {
+			btn1State = btn1.read();
+			if (!btn1State) {
+				speed+=100;
+			}
+		}
 
+		btn2State = btn2.read();
+		while (btn2State) {
+			btn2State = btn2.read();
+			if (!btn2State) {
+				speed-=100;
+			}
+		}
+
+		btn3State = btn3.read();
+		while (btn3State) {
+			btn3State = btn3.read();
+			if (!btn3State) {
+				speed+=100;
+			}
+		}
+
+		btn4State = btn4.read();
+		while (btn4State) {
+			btn4State = btn4.read();
+			if (!btn4State) {
+				speed-=100;
+			}
+		}
+
+		readPressure();
+		//***********START RUNNING THE FAN***********
+		uint8_t result;
 		// slave: read (2) 16-bit registers starting at register 102 to RX buffer
 		j = 0;
 		do {
@@ -186,38 +252,17 @@ void runFan(int speed) {
 			printf("ctr=%d\n",j);
 		}
 
-		Sleep(3000);
+		Sleep(1);
 
 		// frequency is scaled:
 		// 20000 = 50 Hz, 0 = 0 Hz, linear scale 400 units/Hz
 		// Set the fan speed
+
 		setFrequency(node, speed);
+		//***********END RUNNING THE FAN***********
+
+		sprintf(buffer, "%5d ", speed);
+		lcd.setCursor(0,0);
+		lcd.print(buffer);
 	}
-}
-
-int main(void) {
-
-#if defined (__USE_LPCOPEN)
-	// Read clock settings and update SystemCoreClock variable
-	SystemCoreClockUpdate();
-#if !defined(NO_BOARD_LIB)
-	// Set up and initialize all required blocks and
-	// functions related to the board hardware
-	Board_Init();
-	// Set the LED to the state of "On"
-	Board_LED_Set(0, true);
-#endif
-#endif
-
-	printf("hello!\r\n");
-
-	/* The sysTick counter only has 24 bits of precision, so it will
-	overflow quickly with a fast core clock. You can alter the
-	sysTick divider to generate slower sysTick clock rates. */
-	Chip_Clock_SetSysTickClockDiv(1);
-
-	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
-
-	//May be 19999 is the maximum (for the fan to run without stop)
-	runFan(19000);
 }
