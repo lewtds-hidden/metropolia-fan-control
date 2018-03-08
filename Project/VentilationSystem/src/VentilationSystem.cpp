@@ -29,6 +29,10 @@ using namespace std;
 #define TICKRATE_HZ1 1000
 static volatile int counter;
 static volatile uint32_t systicks;
+const uint8_t STATE_START  = 0;
+const uint8_t STATE_AUTOMODE  = 1;
+const uint8_t START_MANUALMODE  = 2;
+const uint8_t START_ERROR  = 3;
 
 #ifdef __cplusplus
 extern "C" {
@@ -74,7 +78,7 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 	}
 }
 
-void readPressure() {
+int16_t readPressure() {
 	ITM_wraper itm;
 	I2C i2c(0, 100000);
 
@@ -93,7 +97,9 @@ void readPressure() {
 	}
 	else {
 		itm.print("Error reading pressure.\r\n");
+		pressure = 0;
 	}
+	return pressure;
 }
 
 
@@ -200,13 +206,17 @@ int main(void) {
 	lcd.begin(16, 2);
 	lcd.clear();
 
+	uint8_t state = STATE_AUTOMODE;
 	char buffer[20] = {0};
 	while (1) {
+		if (state==STATE_AUTOMODE) {
+
+		}
 		btn1State = btn1.read();
 		while (btn1State) {
 			btn1State = btn1.read();
 			if (!btn1State) {
-				speed+=100;
+				// Voice control here?
 			}
 		}
 
@@ -214,7 +224,13 @@ int main(void) {
 		while (btn2State) {
 			btn2State = btn2.read();
 			if (!btn2State) {
-				speed-=100;
+				if (state==STATE_AUTOMODE) {
+					state = STATE_MANUALMODE;
+				} else if (state==STATE_MANUALMODE) {
+					state = AUTOMODE;
+				} else {
+					state=AUTOMODE;
+				}
 			}
 		}
 
