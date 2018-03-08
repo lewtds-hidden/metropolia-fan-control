@@ -291,8 +291,10 @@ int main(void) {
 		//***********END RUNNING THE FAN***********
 
 		lcd.setCursor(0,0);
+		memset(buffer, 0, sizeof(buffer));
+
 		if (readPressureOk) {
-			sprintf(buffer, "P: %d", pressure);
+			sprintf(buffer, "P:%4d", pressure);
 		} else {
 			sprintf(buffer, "P: ?");
 		}
@@ -301,7 +303,7 @@ int main(void) {
 		lcd.setCursor(0, 1);
 
 		memset(buffer, 0, sizeof(buffer));
-		sprintf(buffer, "S: %d", speed);
+		sprintf(buffer, "S: %3d%%", speed / 200);
 		lcd.print(buffer);
 	}
 }
