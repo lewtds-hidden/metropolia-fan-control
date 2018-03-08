@@ -31,8 +31,8 @@ static volatile int counter;
 static volatile uint32_t systicks;
 const uint8_t STATE_START  = 0;
 const uint8_t STATE_AUTOMODE  = 1;
-const uint8_t START_MANUALMODE  = 2;
-const uint8_t START_ERROR  = 3;
+const uint8_t STATE_MANUALMODE  = 2;
+const uint8_t STATE_ERROR  = 3;
 
 #ifdef __cplusplus
 extern "C" {
@@ -227,9 +227,9 @@ int main(void) {
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
 				} else if (state==STATE_MANUALMODE) {
-					state = AUTOMODE;
+					state = STATE_AUTOMODE;
 				} else {
-					state=AUTOMODE;
+					state = STATE_AUTOMODE;
 				}
 			}
 		}
