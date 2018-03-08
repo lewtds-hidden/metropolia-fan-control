@@ -20,6 +20,9 @@
 
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
+#include "I2C.h"
+#include "LiquidCrystal.h"
+
 
 using namespace std;
 
@@ -56,73 +59,6 @@ uint32_t millis() {
 	return systicks;
 }
 
-
-// I2C setup
-
-/* I2CM transfer record */
-static I2CM_XFER_T  i2cmXferRec;
-/* I2C clock is set to 1.8MHz */
-#define I2C_CLK_DIVIDER         (40)
-/* 100KHz I2C bit-rate */
-#define I2C_BITRATE         (100000)
-/* Standard I2C mode */
-#define I2C_MODE    (0)
-
-#if defined(BOARD_NXP_LPCXPRESSO_1549)
-/** 7-bit I2C addresses of Temperature Sensor */
-#define I2C_PRESSURE_ADDR_7BIT  (0x40)
-#endif
-
-/* Initializes pin muxing for I2C interface - note that SystemInit() may
-   already setup your pin muxing at system startup */
-static void Init_I2C_PinMux(void)
-{
-#if defined(BOARD_KEIL_MCB1500)||defined(BOARD_NXP_LPCXPRESSO_1549)
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 22, IOCON_DIGMODE_EN | I2C_MODE);
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 23, IOCON_DIGMODE_EN | I2C_MODE);
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
-#else
-#error "No I2C Pin Muxing defined for this example"
-#endif
-}
-
-/* Setup I2C handle and parameters */
-static void setupI2CMaster()
-{
-	/* Enable I2C clock and reset I2C peripheral - the boot ROM does not
-	   do this */
-	Chip_I2C_Init(LPC_I2C0);
-
-	/* Setup clock rate for I2C */
-	Chip_I2C_SetClockDiv(LPC_I2C0, I2C_CLK_DIVIDER);
-
-	/* Setup I2CM transfer rate */
-	Chip_I2CM_SetBusSpeed(LPC_I2C0, I2C_BITRATE);
-
-	/* Enable Master Mode */
-	Chip_I2CM_Enable(LPC_I2C0);
-}
-
-static void SetupXferRecAndExecute(uint8_t devAddr,
-								   uint8_t *txBuffPtr,
-								   uint16_t txSize,
-								   uint8_t *rxBuffPtr,
-								   uint16_t rxSize)
-{
-	/* Setup I2C transfer record */
-	i2cmXferRec.slaveAddr = devAddr;
-	i2cmXferRec.status = 0;
-	i2cmXferRec.txSz = txSize;
-	i2cmXferRec.rxSz = rxSize;
-	i2cmXferRec.txBuff = txBuffPtr;
-	i2cmXferRec.rxBuff = rxBuffPtr;
-
-	Chip_I2CM_XferBlocking(LPC_I2C0, &i2cmXferRec);
-}
-
-// end I2C setup
-
 void printRegister(ModbusMaster& node, uint16_t reg) {
 	uint8_t result;
 	// slave: read 16-bit registers starting at reg to RX buffer
@@ -139,37 +75,34 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 }
 
 void readPressure() {
-	uint8_t result_buffer[3];
-	uint8_t command_buffer[] = {0xf1};
-
-	//	Read status
-	SetupXferRecAndExecute(
-		I2C_PRESSURE_ADDR_7BIT,
-		command_buffer, 1,
-		result_buffer, 3);
-
-	if (i2cmXferRec.status != I2CM_STATUS_OK) {
-		printf("Error %d reading status.\r\n", i2cmXferRec.status);
-		return;
-	}
-
-	char printf_buffer[512];
-	sprintf(printf_buffer, "Pressure value %x, %x %x %d %d %d\r\n",
-			result_buffer[0],
-			result_buffer[1],
-			result_buffer[2],
-			*((int16_t*)result_buffer),
-			*((int16_t*)result_buffer+1),
-			(int16_t)(result_buffer[1] << 8 + result_buffer[0]));
 	ITM_wraper itm;
-	itm.print(printf_buffer);
+	I2C i2c(0, 100000);
+
+
+	uint8_t pressureData[3];
+	uint8_t readPressureCmd = 0xF1;
+	int16_t pressure = 0;
+
+
+	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
+		pressure = (pressureData[0] << 8) | pressureData[1];
+		pressure = pressure*0.95/240;
+		itm.print("Pressure data: ");
+		itm.print(pressure);
+		itm.print("\n");
+	}
+	else {
+		itm.print("Error reading pressure.\r\n");
+	}
 }
+
 
 bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
 	int ctr;
 	bool atSetpoint;
-	const int delay = 500;
+	//const int delay = 500;
+	const int delay = 1;
 
 	node.writeSingleRegister(1, freq); // set motor frequency
 
@@ -191,22 +124,31 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
 
-	readPressure();
-
 	return atSetpoint;
 }
 
-/*
- * Running the fan
- * Input: speed of the fan. Range from 0 (0Hz) to 20000 (50Hz). 400units/Hz
- * Output: void
- *
- * The fan need the Sleep function and other Modbus library to work
- *
- *
- */
+int main(void) {
 
-void runFan(int speed) {
+#if defined (__USE_LPCOPEN)
+	// Read clock settings and update SystemCoreClock variable
+	SystemCoreClockUpdate();
+#if !defined(NO_BOARD_LIB)
+	// Set up and initialize all required blocks and
+	// functions related to the board hardware
+	Board_Init();
+	// Set the LED to the state of "On"
+	Board_LED_Set(0, true);
+#endif
+#endif
+
+	/* The sysTick counter only has 24 bits of precision, so it will
+	overflow quickly with a fast core clock. You can alter the
+	sysTick divider to generate slower sysTick clock rates. */
+	Chip_Clock_SetSysTickClockDiv(1);
+
+	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
+
+	//***********START For setFrequency***********
 	ModbusMaster node(2); // Create modbus object that connects to slave id 2
 
 	node.begin(9600); // set transmission rate - other parameters are set inside the object and can't be changed here
@@ -232,13 +174,69 @@ void runFan(int speed) {
 	//       but we take the easy way out and just wait a while and hope that everything goes well
 
 	printRegister(node, 3); // for debugging
-
 	int j = 0;
-	//const uint16_t fa[20] = { 1000, 2000, 3000, 3500, 4000, 5000, 7000, 8000, 8300, 10000, 10000, 9000, 8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000 };
+	//***********END For setFrequency***********
 
+	uint16_t speed = 10000;
+
+	//From left to right:
+	DigitalIOPin btn1(0,0,true, true, true);
+	DigitalIOPin btn2(1,3,true, true, true);
+	DigitalIOPin btn3(0,16,true, true, true);
+	DigitalIOPin btn4(0,10,true, true, true);
+
+	bool btn1State,btn2State,btn3State,btn4State = false;
+
+	//***********LCD***********
+	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
+	DigitalIOPin rs(0,8,false, true, false);
+	DigitalIOPin en(1,6,false, true, false);
+	DigitalIOPin d4(1,8,false, true, false);
+	DigitalIOPin d5(0,5,false, true, false);
+	DigitalIOPin d6(0,6,false, true, false);
+	DigitalIOPin d7(0,7,false, true, false);
+	LiquidCrystal lcd(&rs, &en, &d4, &d5, &d6, &d7);
+	// configure display geometry
+	lcd.begin(16, 2);
+	lcd.clear();
+
+	char buffer[20] = {0};
 	while (1) {
-		uint8_t result;
+		btn1State = btn1.read();
+		while (btn1State) {
+			btn1State = btn1.read();
+			if (!btn1State) {
+				speed+=100;
+			}
+		}
 
+		btn2State = btn2.read();
+		while (btn2State) {
+			btn2State = btn2.read();
+			if (!btn2State) {
+				speed-=100;
+			}
+		}
+
+		btn3State = btn3.read();
+		while (btn3State) {
+			btn3State = btn3.read();
+			if (!btn3State) {
+				speed+=100;
+			}
+		}
+
+		btn4State = btn4.read();
+		while (btn4State) {
+			btn4State = btn4.read();
+			if (!btn4State) {
+				speed-=100;
+			}
+		}
+
+		readPressure();
+		//***********START RUNNING THE FAN***********
+		uint8_t result;
 		// slave: read (2) 16-bit registers starting at register 102 to RX buffer
 		j = 0;
 		do {
@@ -254,47 +252,17 @@ void runFan(int speed) {
 			printf("ctr=%d\n",j);
 		}
 
-		Sleep(3000);
+		Sleep(1);
 
 		// frequency is scaled:
 		// 20000 = 50 Hz, 0 = 0 Hz, linear scale 400 units/Hz
 		// Set the fan speed
+
 		setFrequency(node, speed);
+		//***********END RUNNING THE FAN***********
+
+		sprintf(buffer, "%5d ", speed);
+		lcd.setCursor(0,0);
+		lcd.print(buffer);
 	}
-}
-
-int main(void) {
-
-#if defined (__USE_LPCOPEN)
-	// Read clock settings and update SystemCoreClock variable
-	SystemCoreClockUpdate();
-#if !defined(NO_BOARD_LIB)
-	// Set up and initialize all required blocks and
-	// functions related to the board hardware
-	Board_Init();
-	// Set the LED to the state of "On"
-	Board_LED_Set(0, true);
-#endif
-#endif
-
-	printf("hello!\r\n");
-	/* Setup I2C pin muxing */
-	Init_I2C_PinMux();
-
-	/* Allocate I2C handle, setup I2C rate, and initialize I2C
-	   clocking */
-	setupI2CMaster();
-
-	/* Disable the interrupt for the I2C */
-	NVIC_DisableIRQ(I2C0_IRQn);
-
-	/* The sysTick counter only has 24 bits of precision, so it will
-				   overflow quickly with a fast core clock. You can alter the
-				   sysTick divider to generate slower sysTick clock rates. */
-	Chip_Clock_SetSysTickClockDiv(1);
-
-	SysTick_Config(Chip_Clock_GetSysTickClockRate()/TICKRATE_HZ1);
-
-	//May be 19999 is the maximum (for the fan to run without stop)
-	runFan(19000);
 }
