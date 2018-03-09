@@ -17,6 +17,7 @@
 #endif
 
 #include <cr_section_macros.h>
+#include <string.h>
 
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
@@ -31,8 +32,8 @@ static volatile int counter;
 static volatile uint32_t systicks;
 const uint8_t STATE_START  = 0;
 const uint8_t STATE_AUTOMODE  = 1;
-const uint8_t START_MANUALMODE  = 2;
-const uint8_t START_ERROR  = 3;
+const uint8_t STATE_MANUALMODE  = 2;
+const uint8_t STATE_ERROR  = 3;
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,15 +79,12 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 	}
 }
 
-int16_t readPressure() {
+bool readPressure(int16_t& pressure) {
 	ITM_wraper itm;
 	I2C i2c(0, 100000);
 
-
 	uint8_t pressureData[3];
 	uint8_t readPressureCmd = 0xF1;
-	int16_t pressure = 0;
-
 
 	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
 		pressure = (pressureData[0] << 8) | pressureData[1];
@@ -98,8 +96,10 @@ int16_t readPressure() {
 	else {
 		itm.print("Error reading pressure.\r\n");
 		pressure = 0;
+		return false;
 	}
-	return pressure;
+
+	return true;
 }
 
 
@@ -131,6 +131,16 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
 
 	return atSetpoint;
+}
+
+int32_t setSpeed(int32_t newSpeed) {
+	if (newSpeed > 20000) {
+		return 20000;
+	} else if (newSpeed < 0) {
+		return 0;
+	} else {
+		return newSpeed;
+	}
 }
 
 int main(void) {
@@ -201,6 +211,7 @@ int main(void) {
 	DigitalIOPin d5(0,5,false, true, false);
 	DigitalIOPin d6(0,6,false, true, false);
 	DigitalIOPin d7(0,7,false, true, false);
+
 	LiquidCrystal lcd(&rs, &en, &d4, &d5, &d6, &d7);
 	// configure display geometry
 	lcd.begin(16, 2);
@@ -227,9 +238,9 @@ int main(void) {
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
 				} else if (state==STATE_MANUALMODE) {
-					state = AUTOMODE;
+					state = STATE_AUTOMODE;
 				} else {
-					state=AUTOMODE;
+					state = STATE_AUTOMODE;
 				}
 			}
 		}
@@ -238,7 +249,7 @@ int main(void) {
 		while (btn3State) {
 			btn3State = btn3.read();
 			if (!btn3State) {
-				speed+=100;
+				speed = setSpeed(speed - 1000);
 			}
 		}
 
@@ -246,11 +257,13 @@ int main(void) {
 		while (btn4State) {
 			btn4State = btn4.read();
 			if (!btn4State) {
-				speed-=100;
+				speed = setSpeed(speed + 1000);
 			}
 		}
 
-		readPressure();
+		int16_t pressure = 0;
+		bool readPressureOk = readPressure(pressure);
+
 		//***********START RUNNING THE FAN***********
 		uint8_t result;
 		// slave: read (2) 16-bit registers starting at register 102 to RX buffer
@@ -263,8 +276,7 @@ int main(void) {
 		// if read is successful print frequency and current (scaled values)
 		if (result == node.ku8MBSuccess) {
 			printf("F=%4d, I=%4d  (ctr=%d)\n", node.getResponseBuffer(0), node.getResponseBuffer(1),j);
-		}
-		else {
+		} else {
 			printf("ctr=%d\n",j);
 		}
 
@@ -275,10 +287,23 @@ int main(void) {
 		// Set the fan speed
 
 		setFrequency(node, speed);
+
 		//***********END RUNNING THE FAN***********
 
-		sprintf(buffer, "%5d ", speed);
 		lcd.setCursor(0,0);
+		memset(buffer, 0, sizeof(buffer));
+
+		if (readPressureOk) {
+			sprintf(buffer, "P:%4d", pressure);
+		} else {
+			sprintf(buffer, "P: ?");
+		}
+
+		lcd.print(buffer);
+		lcd.setCursor(0, 1);
+
+		memset(buffer, 0, sizeof(buffer));
+		sprintf(buffer, "S: %3d%%", speed / 200);
 		lcd.print(buffer);
 	}
 }
