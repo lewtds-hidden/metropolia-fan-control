@@ -31,8 +31,10 @@ static volatile int counter;
 static volatile uint32_t systicks;
 const uint8_t STATE_START  = 0;
 const uint8_t STATE_AUTOMODE  = 1;
-const uint8_t START_MANUALMODE  = 2;
-const uint8_t START_ERROR  = 3;
+const uint8_t STATE_MANUALMODE  = 2;
+const uint8_t STATE_ERROR  = 3;
+const int16_t MARGIN = 1;
+const uint8_t ARRAY_SIZE  = 7;
 
 #ifdef __cplusplus
 extern "C" {
@@ -183,8 +185,6 @@ int main(void) {
 	int j = 0;
 	//***********END For setFrequency***********
 
-	uint16_t speed = 10000;
-
 	//From left to right:
 	DigitalIOPin btn1(0,0,true, true, true);
 	DigitalIOPin btn2(1,3,true, true, true);
@@ -192,7 +192,18 @@ int main(void) {
 	DigitalIOPin btn4(0,10,true, true, true);
 
 	bool btn1State,btn2State,btn3State,btn4State = false;
+	int16_t Kp, Ki, Kd, error, lastError, integral , derivative = 0;
+	int32_t speed = 0;
+	integral = 0;
+	Kp = 200;
+	Ki = 20;
+	Kd = 100;
+	int16_t pressure = 0;
+	int16_t pressureArray[ARRAY_SIZE] = {0};
+	int16_t pressureArraySorted[ARRAY_SIZE] = {0};
 
+
+	int16_t targetPressure = 40;
 	//***********LCD***********
 	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
 	DigitalIOPin rs(0,8,false, true, false);
@@ -207,9 +218,28 @@ int main(void) {
 	lcd.clear();
 
 	uint8_t state = STATE_AUTOMODE;
-	char buffer[20] = {0};
+	char buffer[120] = {0};
+	char bufferLCD[10] = {0};
+	ITM_wraper itm;
 	while (1) {
+
 		if (state==STATE_AUTOMODE) {
+			if ((pressure != targetPressure + MARGIN)&&(pressure != targetPressure - MARGIN) && pressure != targetPressure) {
+				error = targetPressure - pressureArraySorted[3];
+				integral+= error;
+				derivative= error - lastError;
+				lastError = error;
+				if (integral > 500) integral = 500;
+				if (integral < -500) integral = -500;
+				speed = 10000 + Kp*error + Ki*integral + Kd*derivative;
+				if (speed> 20000) speed = 20000;
+				if (speed < 0) speed = 0;
+			}
+			sprintf(buffer,"error: %3d, intergral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6d \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
+			itm.print(buffer);
+			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[3], targetPressure);
+			lcd.setCursor(0,1);
+			lcd.print(bufferLCD);
 
 		}
 		btn1State = btn1.read();
@@ -227,9 +257,9 @@ int main(void) {
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
 				} else if (state==STATE_MANUALMODE) {
-					state = AUTOMODE;
+					state = STATE_AUTOMODE;
 				} else {
-					state=AUTOMODE;
+					state=STATE_AUTOMODE;
 				}
 			}
 		}
@@ -250,7 +280,30 @@ int main(void) {
 			}
 		}
 
-		readPressure();
+		pressure = readPressure();
+
+		//***********GET MEDIAN VALUE***********
+		// Load pressure to array
+		for (uint8_t i=0; i < ARRAY_SIZE; i++) {
+			if (i==6) {
+				pressureArray[i] = pressure;
+			} else {
+				pressureArray[i] = pressureArray[i+1];
+			}
+			pressureArraySorted[i] = pressureArray[i];
+		}
+
+		// Sort array
+		for(int x=0; x<ARRAY_SIZE; x++){
+			for(int y=0; y<ARRAY_SIZE-1; y++){
+				if(pressureArraySorted[y]>pressureArraySorted[y+1]){
+					int temp = pressureArraySorted[y+1];
+					pressureArraySorted[y+1] = pressureArraySorted[y];
+					pressureArraySorted[y] = temp;
+				}
+			}
+		}
+
 		//***********START RUNNING THE FAN***********
 		uint8_t result;
 		// slave: read (2) 16-bit registers starting at register 102 to RX buffer
