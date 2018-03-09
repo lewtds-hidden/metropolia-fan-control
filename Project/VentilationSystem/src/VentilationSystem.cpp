@@ -17,7 +17,6 @@
 #endif
 
 #include <cr_section_macros.h>
-#include <string.h>
 
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
@@ -34,6 +33,8 @@ const uint8_t STATE_START  = 0;
 const uint8_t STATE_AUTOMODE  = 1;
 const uint8_t STATE_MANUALMODE  = 2;
 const uint8_t STATE_ERROR  = 3;
+const int16_t MARGIN = 1;
+const uint8_t ARRAY_SIZE  = 7;
 
 #ifdef __cplusplus
 extern "C" {
@@ -79,12 +80,15 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 	}
 }
 
-bool readPressure(int16_t& pressure) {
+int16_t readPressure() {
 	ITM_wraper itm;
 	I2C i2c(0, 100000);
 
+
 	uint8_t pressureData[3];
 	uint8_t readPressureCmd = 0xF1;
+	int16_t pressure = 0;
+
 
 	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
 		pressure = (pressureData[0] << 8) | pressureData[1];
@@ -96,10 +100,8 @@ bool readPressure(int16_t& pressure) {
 	else {
 		itm.print("Error reading pressure.\r\n");
 		pressure = 0;
-		return false;
 	}
-
-	return true;
+	return pressure;
 }
 
 
@@ -131,16 +133,6 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
 
 	return atSetpoint;
-}
-
-int32_t setSpeed(int32_t newSpeed) {
-	if (newSpeed > 20000) {
-		return 20000;
-	} else if (newSpeed < 0) {
-		return 0;
-	} else {
-		return newSpeed;
-	}
 }
 
 int main(void) {
@@ -193,8 +185,6 @@ int main(void) {
 	int j = 0;
 	//***********END For setFrequency***********
 
-	uint16_t speed = 10000;
-
 	//From left to right:
 	DigitalIOPin btn1(0,0,true, true, true);
 	DigitalIOPin btn2(1,3,true, true, true);
@@ -202,7 +192,18 @@ int main(void) {
 	DigitalIOPin btn4(0,10,true, true, true);
 
 	bool btn1State,btn2State,btn3State,btn4State = false;
+	int16_t Kp, Ki, Kd, error, lastError, integral , derivative = 0;
+	int32_t speed = 0;
+	integral = 0;
+	Kp = 200;
+	Ki = 20;
+	Kd = 100;
+	int16_t pressure = 0;
+	int16_t pressureArray[ARRAY_SIZE] = {0};
+	int16_t pressureArraySorted[ARRAY_SIZE] = {0};
 
+
+	int16_t targetPressure = 40;
 	//***********LCD***********
 	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
 	DigitalIOPin rs(0,8,false, true, false);
@@ -211,16 +212,34 @@ int main(void) {
 	DigitalIOPin d5(0,5,false, true, false);
 	DigitalIOPin d6(0,6,false, true, false);
 	DigitalIOPin d7(0,7,false, true, false);
-
 	LiquidCrystal lcd(&rs, &en, &d4, &d5, &d6, &d7);
 	// configure display geometry
 	lcd.begin(16, 2);
 	lcd.clear();
 
 	uint8_t state = STATE_AUTOMODE;
-	char buffer[20] = {0};
+	char buffer[120] = {0};
+	char bufferLCD[10] = {0};
+	ITM_wraper itm;
 	while (1) {
+
 		if (state==STATE_AUTOMODE) {
+			if ((pressure != targetPressure + MARGIN)&&(pressure != targetPressure - MARGIN) && pressure != targetPressure) {
+				error = targetPressure - pressureArraySorted[3];
+				integral+= error;
+				derivative= error - lastError;
+				lastError = error;
+				if (integral > 500) integral = 500;
+				if (integral < -500) integral = -500;
+				speed = 10000 + Kp*error + Ki*integral + Kd*derivative;
+				if (speed> 20000) speed = 20000;
+				if (speed < 0) speed = 0;
+			}
+			sprintf(buffer,"error: %3d, intergral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6d \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
+			itm.print(buffer);
+			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[3], targetPressure);
+			lcd.setCursor(0,1);
+			lcd.print(bufferLCD);
 
 		}
 		btn1State = btn1.read();
@@ -240,7 +259,7 @@ int main(void) {
 				} else if (state==STATE_MANUALMODE) {
 					state = STATE_AUTOMODE;
 				} else {
-					state = STATE_AUTOMODE;
+					state=STATE_AUTOMODE;
 				}
 			}
 		}
@@ -249,7 +268,7 @@ int main(void) {
 		while (btn3State) {
 			btn3State = btn3.read();
 			if (!btn3State) {
-				speed = setSpeed(speed - 1000);
+				speed+=100;
 			}
 		}
 
@@ -257,12 +276,33 @@ int main(void) {
 		while (btn4State) {
 			btn4State = btn4.read();
 			if (!btn4State) {
-				speed = setSpeed(speed + 1000);
+				speed-=100;
 			}
 		}
 
-		int16_t pressure = 0;
-		bool readPressureOk = readPressure(pressure);
+		pressure = readPressure();
+
+		//***********GET MEDIAN VALUE***********
+		// Load pressure to array
+		for (uint8_t i=0; i < ARRAY_SIZE; i++) {
+			if (i==6) {
+				pressureArray[i] = pressure;
+			} else {
+				pressureArray[i] = pressureArray[i+1];
+			}
+			pressureArraySorted[i] = pressureArray[i];
+		}
+
+		// Sort array
+		for(int x=0; x<ARRAY_SIZE; x++){
+			for(int y=0; y<ARRAY_SIZE-1; y++){
+				if(pressureArraySorted[y]>pressureArraySorted[y+1]){
+					int temp = pressureArraySorted[y+1];
+					pressureArraySorted[y+1] = pressureArraySorted[y];
+					pressureArraySorted[y] = temp;
+				}
+			}
+		}
 
 		//***********START RUNNING THE FAN***********
 		uint8_t result;
@@ -276,7 +316,8 @@ int main(void) {
 		// if read is successful print frequency and current (scaled values)
 		if (result == node.ku8MBSuccess) {
 			printf("F=%4d, I=%4d  (ctr=%d)\n", node.getResponseBuffer(0), node.getResponseBuffer(1),j);
-		} else {
+		}
+		else {
 			printf("ctr=%d\n",j);
 		}
 
@@ -287,23 +328,10 @@ int main(void) {
 		// Set the fan speed
 
 		setFrequency(node, speed);
-
 		//***********END RUNNING THE FAN***********
 
+		sprintf(buffer, "%5d ", speed);
 		lcd.setCursor(0,0);
-		memset(buffer, 0, sizeof(buffer));
-
-		if (readPressureOk) {
-			sprintf(buffer, "P:%4d", pressure);
-		} else {
-			sprintf(buffer, "P: ?");
-		}
-
-		lcd.print(buffer);
-		lcd.setCursor(0, 1);
-
-		memset(buffer, 0, sizeof(buffer));
-		sprintf(buffer, "S: %3d%%", speed / 200);
 		lcd.print(buffer);
 	}
 }
