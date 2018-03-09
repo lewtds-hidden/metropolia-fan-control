@@ -17,6 +17,7 @@
 #endif
 
 #include <cr_section_macros.h>
+#include <string.h>
 
 #include "ModbusMaster.h"
 #include "ITMwraper.h"
@@ -34,7 +35,7 @@ const uint8_t STATE_AUTOMODE  = 1;
 const uint8_t STATE_MANUALMODE  = 2;
 const uint8_t STATE_ERROR  = 3;
 const int16_t MARGIN = 1;
-const uint8_t ARRAY_SIZE  = 7;
+const uint8_t ARRAY_SIZE  = 11;
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,36 +82,37 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 }
 
 int16_t readPressure() {
-	ITM_wraper itm;
+	//ITM_wraper itm;
 	I2C i2c(0, 100000);
-
 
 	uint8_t pressureData[3];
 	uint8_t readPressureCmd = 0xF1;
-	int16_t pressure = 0;
-
+	int16_t pressure;
 
 	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
 		pressure = (pressureData[0] << 8) | pressureData[1];
 		pressure = pressure*0.95/240;
-		itm.print("Pressure data: ");
-		itm.print(pressure);
-		itm.print("\n");
+		//itm.print("Pressure data: ");
+		//itm.print(pressure);
+		//itm.print("\n");
 	}
 	else {
-		itm.print("Error reading pressure.\r\n");
+		//itm.print("Error reading pressure.\r\n");
 		pressure = 0;
 	}
+
 	return pressure;
 }
 
 
-bool setFrequency(ModbusMaster& node, uint16_t freq) {
+int16_t setFrequency(ModbusMaster& node, int32_t freq) {
 	uint8_t result;
 	int ctr;
 	bool atSetpoint;
 	//const int delay = 500;
 	const int delay = 1;
+	//int myDelay = 1;
+	//myDelay=freq==0?500:1;
 
 	node.writeSingleRegister(1, freq); // set motor frequency
 
@@ -133,6 +135,16 @@ bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	printf("Elapsed: %d\n", ctr * delay); // for debugging
 
 	return atSetpoint;
+}
+
+int32_t setSpeed(int32_t newSpeed) {
+	if (newSpeed > 20000) {
+		return 20000;
+	} else if (newSpeed < 0) {
+		return 0;
+	} else {
+		return newSpeed;
+	}
 }
 
 int main(void) {
@@ -199,11 +211,11 @@ int main(void) {
 	Ki = 20;
 	Kd = 100;
 	int16_t pressure = 0;
+	int16_t targetPressure = 40;
 	int16_t pressureArray[ARRAY_SIZE] = {0};
 	int16_t pressureArraySorted[ARRAY_SIZE] = {0};
+	int16_t timeCounter = 0;
 
-
-	int16_t targetPressure = 40;
 	//***********LCD***********
 	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
 	DigitalIOPin rs(0,8,false, true, false);
@@ -212,36 +224,55 @@ int main(void) {
 	DigitalIOPin d5(0,5,false, true, false);
 	DigitalIOPin d6(0,6,false, true, false);
 	DigitalIOPin d7(0,7,false, true, false);
+	DigitalIOPin buzzer(0,9,false, true, false);
+
 	LiquidCrystal lcd(&rs, &en, &d4, &d5, &d6, &d7);
 	// configure display geometry
 	lcd.begin(16, 2);
 	lcd.clear();
 
 	uint8_t state = STATE_AUTOMODE;
-	char buffer[120] = {0};
-	char bufferLCD[10] = {0};
+	//char buffer[120] = {0};
+	char bufferLCD[17] = {0};
 	ITM_wraper itm;
+	bool isError = false;
 	while (1) {
-
+		//********************AUTO MODE********************
 		if (state==STATE_AUTOMODE) {
 			if ((pressure != targetPressure + MARGIN)&&(pressure != targetPressure - MARGIN) && pressure != targetPressure) {
-				error = targetPressure - pressureArraySorted[3];
+				error = targetPressure - pressureArraySorted[ARRAY_SIZE/2];
 				integral+= error;
 				derivative= error - lastError;
 				lastError = error;
 				if (integral > 500) integral = 500;
 				if (integral < -500) integral = -500;
 				speed = 10000 + Kp*error + Ki*integral + Kd*derivative;
-				if (speed> 20000) speed = 20000;
-				if (speed < 0) speed = 0;
+				speed = setSpeed(speed);
+
+				if (!isError) timeCounter++;
+				if (timeCounter>=100) {
+					isError = true;
+					buzzer.write(true);
+					lcd.setCursor(0,0);
+					lcd.print("ERROR! TIME OUT!");
+					Sleep(1000);
+					buzzer.write(false);
+					timeCounter=0;
+				}
+			} else {
+				timeCounter = 0;
+				isError = false;
+				lcd.setCursor(0,0);
+				lcd.print("                ");
 			}
-			sprintf(buffer,"error: %3d, intergral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6d \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
-			itm.print(buffer);
-			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[3], targetPressure);
+			//sprintf(buffer,"error: %3d, integral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6ld \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
+			//itm.print(buffer);
+			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[ARRAY_SIZE/2], targetPressure);
 			lcd.setCursor(0,1);
 			lcd.print(bufferLCD);
-
 		}
+
+
 		btn1State = btn1.read();
 		while (btn1State) {
 			btn1State = btn1.read();
@@ -254,12 +285,15 @@ int main(void) {
 		while (btn2State) {
 			btn2State = btn2.read();
 			if (!btn2State) {
+				lcd.clear();
+				speed = 0;
+				integral = 0;
+				error = 0;
+				lastError = 0;
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
 				} else if (state==STATE_MANUALMODE) {
 					state = STATE_AUTOMODE;
-				} else {
-					state=STATE_AUTOMODE;
 				}
 			}
 		}
@@ -268,7 +302,13 @@ int main(void) {
 		while (btn3State) {
 			btn3State = btn3.read();
 			if (!btn3State) {
-				speed+=100;
+				if (state==STATE_AUTOMODE) {
+					targetPressure-=1;
+				} else if (state==STATE_MANUALMODE){
+					speed = setSpeed(speed - 1000);
+				} else {
+
+				}
 			}
 		}
 
@@ -276,7 +316,13 @@ int main(void) {
 		while (btn4State) {
 			btn4State = btn4.read();
 			if (!btn4State) {
-				speed-=100;
+				if (state==STATE_AUTOMODE) {
+					targetPressure+=1;
+				} else if (state==STATE_MANUALMODE){
+					speed = setSpeed(speed + 1000);
+				} else {
+
+				}
 			}
 		}
 
@@ -285,7 +331,7 @@ int main(void) {
 		//***********GET MEDIAN VALUE***********
 		// Load pressure to array
 		for (uint8_t i=0; i < ARRAY_SIZE; i++) {
-			if (i==6) {
+			if (i==ARRAY_SIZE-1) {
 				pressureArray[i] = pressure;
 			} else {
 				pressureArray[i] = pressureArray[i+1];
@@ -316,8 +362,7 @@ int main(void) {
 		// if read is successful print frequency and current (scaled values)
 		if (result == node.ku8MBSuccess) {
 			printf("F=%4d, I=%4d  (ctr=%d)\n", node.getResponseBuffer(0), node.getResponseBuffer(1),j);
-		}
-		else {
+		} else {
 			printf("ctr=%d\n",j);
 		}
 
@@ -330,8 +375,24 @@ int main(void) {
 		setFrequency(node, speed);
 		//***********END RUNNING THE FAN***********
 
-		sprintf(buffer, "%5d ", speed);
-		lcd.setCursor(0,0);
-		lcd.print(buffer);
+
+		//********************MANUAL MODE********************
+		if (state==STATE_MANUALMODE) {
+			lcd.setCursor(0,0);
+			memset(bufferLCD, 0, sizeof(bufferLCD));
+
+			//if (readPressureOk) {
+				sprintf(bufferLCD, "Pressure:%4d", pressure);
+			//} else {
+			//	sprintf(buffer, "P: ?");
+			//}
+
+			lcd.print(bufferLCD);
+			lcd.setCursor(0, 1);
+
+			memset(bufferLCD, 0, sizeof(bufferLCD));
+			sprintf(bufferLCD, "Speed: %3d%%", speed / 200);
+			lcd.print(bufferLCD);
+		}
 	}
 }
