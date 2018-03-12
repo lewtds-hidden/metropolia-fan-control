@@ -81,38 +81,36 @@ void printRegister(ModbusMaster& node, uint16_t reg) {
 	}
 }
 
-int16_t readPressure() {
-	//ITM_wraper itm;
+bool readPressure(int16_t& pressure) {
+	ITM_wraper itm;
 	I2C i2c(0, 100000);
 
 	uint8_t pressureData[3];
 	uint8_t readPressureCmd = 0xF1;
-	int16_t pressure;
 
 	if (i2c.transaction(0x40, &readPressureCmd, 1, pressureData, 3)) {
 		pressure = (pressureData[0] << 8) | pressureData[1];
 		pressure = pressure*0.95/240;
-		//itm.print("Pressure data: ");
-		//itm.print(pressure);
-		//itm.print("\n");
+		itm.print("Pressure data: ");
+		itm.print(pressure);
+		itm.print("\n");
 	}
 	else {
-		//itm.print("Error reading pressure.\r\n");
+		itm.print("Error reading pressure.\r\n");
 		pressure = 0;
+		return false;
 	}
 
-	return pressure;
+	return true;
 }
 
 
-int16_t setFrequency(ModbusMaster& node, int32_t freq) {
+bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
 	int ctr;
 	bool atSetpoint;
 	//const int delay = 500;
-	const int delay = 1;
-	//int myDelay = 1;
-	//myDelay=freq==0?500:1;
+	const int delay = 1; // original value = 500; should be higher so setFreq can work with speed = 0;
 
 	node.writeSingleRegister(1, freq); // set motor frequency
 
@@ -206,10 +204,12 @@ int main(void) {
 	bool btn1State,btn2State,btn3State,btn4State = false;
 	int16_t Kp, Ki, Kd, error, lastError, integral , derivative = 0;
 	int32_t speed = 0;
+	uint8_t step  = 1;
 	integral = 0;
-	Kp = 200;
-	Ki = 20;
-	Kd = 100;
+	Kp = 120;  //200
+	//50: 120
+	Ki = 10;
+	Kd = 100;	//100
 	int16_t pressure = 0;
 	int16_t targetPressure = 40;
 	int16_t pressureArray[ARRAY_SIZE] = {0};
@@ -232,52 +232,79 @@ int main(void) {
 	lcd.clear();
 
 	uint8_t state = STATE_AUTOMODE;
-	//char buffer[120] = {0};
+	char buffer[120] = {0};
 	char bufferLCD[17] = {0};
 	ITM_wraper itm;
 	bool isError = false;
+
 	while (1) {
+		if (step==2) {
+			Board_LED_Set(1, true);
+			Board_LED_Set(2, false);
+			Board_LED_Set(0, false);
+		} else if (step==3) {
+			Board_LED_Set(2, true);
+			Board_LED_Set(1, false);
+			Board_LED_Set(0, false);
+		} else {
+			Board_LED_Set(0, true);
+			Board_LED_Set(1, false);
+			Board_LED_Set(2, false);
+		}
+
 		//********************AUTO MODE********************
 		if (state==STATE_AUTOMODE) {
-			if ((pressure != targetPressure + MARGIN)&&(pressure != targetPressure - MARGIN) && pressure != targetPressure) {
+			if ((pressureArraySorted[ARRAY_SIZE/2] != targetPressure + MARGIN)&&(pressureArraySorted[ARRAY_SIZE/2] != targetPressure - MARGIN) && pressureArraySorted[ARRAY_SIZE/2] != targetPressure && !isError) {
 				error = targetPressure - pressureArraySorted[ARRAY_SIZE/2];
 				integral+= error;
 				derivative= error - lastError;
 				lastError = error;
-				if (integral > 500) integral = 500;
-				if (integral < -500) integral = -500;
-				speed = 10000 + Kp*error + Ki*integral + Kd*derivative;
+				/*
+				if (targetPressure <= 13 && pressureArraySorted[ARRAY_SIZE/2] <=13) {
+					if (pressureArraySorted[ARRAY_SIZE/2] > targetPressure) {
+						speed -=10;
+					} else {
+						speed +=10;
+					}
+				} else {
+					speed =  Kp*error + Ki*integral + Kd*derivative;
+				}*/
+
+				speed =  Kp*error + Ki*integral + Kd*derivative;
 				speed = setSpeed(speed);
 
-				if (!isError) timeCounter++;
-				if (timeCounter>=100) {
+				timeCounter++;
+				if (timeCounter>=150) { //~20 seconds
 					isError = true;
 					buzzer.write(true);
 					lcd.setCursor(0,0);
 					lcd.print("ERROR! TIME OUT!");
 					Sleep(1000);
+					speed = 0;
+					integral = 0;
 					buzzer.write(false);
 					timeCounter=0;
 				}
 			} else {
 				timeCounter = 0;
-				isError = false;
-				lcd.setCursor(0,0);
-				lcd.print("                ");
+				//lcd.setCursor(0,0);
+				//lcd.print("                ");
 			}
-			//sprintf(buffer,"error: %3d, integral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6ld \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
-			//itm.print(buffer);
+			sprintf(buffer,"error: %3d, integral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6ld \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
+			itm.print(buffer);
 			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[ARRAY_SIZE/2], targetPressure);
 			lcd.setCursor(0,1);
 			lcd.print(bufferLCD);
 		}
 
-
 		btn1State = btn1.read();
 		while (btn1State) {
 			btn1State = btn1.read();
 			if (!btn1State) {
-				// Voice control here?
+				step+=1;
+				if (step>=4) {
+					step= 1;
+				}
 			}
 		}
 
@@ -292,8 +319,11 @@ int main(void) {
 				lastError = 0;
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
+					step = 1;
 				} else if (state==STATE_MANUALMODE) {
 					state = STATE_AUTOMODE;
+					isError = false;
+					step = 1;
 				}
 			}
 		}
@@ -303,9 +333,12 @@ int main(void) {
 			btn3State = btn3.read();
 			if (!btn3State) {
 				if (state==STATE_AUTOMODE) {
-					targetPressure-=1;
+					targetPressure-=step;
+					if (targetPressure < -128) {
+						targetPressure  = -128;
+					}
 				} else if (state==STATE_MANUALMODE){
-					speed = setSpeed(speed - 1000);
+					speed = setSpeed(speed - step*1000);
 				} else {
 
 				}
@@ -317,35 +350,41 @@ int main(void) {
 			btn4State = btn4.read();
 			if (!btn4State) {
 				if (state==STATE_AUTOMODE) {
-					targetPressure+=1;
+					targetPressure+=step;
+					if (targetPressure > 128) {
+						targetPressure  = 128;
+					}
 				} else if (state==STATE_MANUALMODE){
-					speed = setSpeed(speed + 1000);
+					speed = setSpeed(speed + step*1000);
 				} else {
 
 				}
 			}
 		}
 
-		pressure = readPressure();
+		int16_t pressure = 0;
+		bool readPressureOk = readPressure(pressure);
 
 		//***********GET MEDIAN VALUE***********
 		// Load pressure to array
-		for (uint8_t i=0; i < ARRAY_SIZE; i++) {
-			if (i==ARRAY_SIZE-1) {
-				pressureArray[i] = pressure;
-			} else {
-				pressureArray[i] = pressureArray[i+1];
+		if (readPressureOk) {
+			for (uint8_t i=0; i < ARRAY_SIZE; i++) {
+				if (i==ARRAY_SIZE-1) {
+					pressureArray[i] = pressure;
+				} else {
+					pressureArray[i] = pressureArray[i+1];
+				}
+				pressureArraySorted[i] = pressureArray[i];
 			}
-			pressureArraySorted[i] = pressureArray[i];
-		}
 
-		// Sort array
-		for(int x=0; x<ARRAY_SIZE; x++){
-			for(int y=0; y<ARRAY_SIZE-1; y++){
-				if(pressureArraySorted[y]>pressureArraySorted[y+1]){
-					int temp = pressureArraySorted[y+1];
-					pressureArraySorted[y+1] = pressureArraySorted[y];
-					pressureArraySorted[y] = temp;
+			// Sort array
+			for(int x=0; x<ARRAY_SIZE; x++){
+				for(int y=0; y<ARRAY_SIZE-1; y++){
+					if(pressureArraySorted[y]>pressureArraySorted[y+1]){
+						int temp = pressureArraySorted[y+1];
+						pressureArraySorted[y+1] = pressureArraySorted[y];
+						pressureArraySorted[y] = temp;
+					}
 				}
 			}
 		}
@@ -368,6 +407,7 @@ int main(void) {
 
 		Sleep(1);
 
+
 		// frequency is scaled:
 		// 20000 = 50 Hz, 0 = 0 Hz, linear scale 400 units/Hz
 		// Set the fan speed
@@ -381,11 +421,11 @@ int main(void) {
 			lcd.setCursor(0,0);
 			memset(bufferLCD, 0, sizeof(bufferLCD));
 
-			//if (readPressureOk) {
-				sprintf(bufferLCD, "Pressure:%4d", pressure);
-			//} else {
-			//	sprintf(buffer, "P: ?");
-			//}
+			if (readPressureOk) {
+				sprintf(bufferLCD, "Pressure:%4d", pressureArraySorted[ARRAY_SIZE/2]);
+			} else {
+				sprintf(buffer, "P: ?");
+			}
 
 			lcd.print(bufferLCD);
 			lcd.setCursor(0, 1);
