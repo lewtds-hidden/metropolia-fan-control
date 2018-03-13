@@ -29,6 +29,8 @@ using namespace std;
 
 #define TICKRATE_HZ1 1000
 static volatile int counter;
+static volatile int timeCounter;
+
 static volatile uint32_t systicks;
 const uint8_t STATE_START  = 0;
 const uint8_t STATE_AUTOMODE  = 1;
@@ -48,6 +50,7 @@ void SysTick_Handler(void)
 {
 	systicks++;
 	if(counter > 0) counter--;
+	if(timeCounter > 0) timeCounter--;
 }
 #ifdef __cplusplus
 }
@@ -214,7 +217,6 @@ int main(void) {
 	int16_t targetPressure = 40;
 	int16_t pressureArray[ARRAY_SIZE] = {0};
 	int16_t pressureArraySorted[ARRAY_SIZE] = {0};
-	int16_t timeCounter = 0;
 
 	//***********LCD***********
 	Chip_RIT_Init(LPC_RITIMER); // initialize RIT (enable clocking etc.)
@@ -237,6 +239,9 @@ int main(void) {
 	ITM_wraper itm;
 	bool isError = false;
 
+	timeCounter = 15000;
+	lcd.setCursor(13,1);
+	lcd.print("-+" + to_string(step));
 	while (1) {
 		if (step==2) {
 			Board_LED_Set(1, true);
@@ -259,22 +264,11 @@ int main(void) {
 				integral+= error;
 				derivative= error - lastError;
 				lastError = error;
-				/*
-				if (targetPressure <= 13 && pressureArraySorted[ARRAY_SIZE/2] <=13) {
-					if (pressureArraySorted[ARRAY_SIZE/2] > targetPressure) {
-						speed -=10;
-					} else {
-						speed +=10;
-					}
-				} else {
-					speed =  Kp*error + Ki*integral + Kd*derivative;
-				}*/
 
 				speed =  Kp*error + Ki*integral + Kd*derivative;
 				speed = setSpeed(speed);
 
-				timeCounter++;
-				if (timeCounter>=150) { //~20 seconds
+				if (timeCounter<=0) {
 					isError = true;
 					buzzer.write(true);
 					lcd.setCursor(0,0);
@@ -285,14 +279,15 @@ int main(void) {
 					buzzer.write(false);
 					timeCounter=0;
 				}
+
 			} else {
-				timeCounter = 0;
+				timeCounter = 15000; //15 seconds
 				//lcd.setCursor(0,0);
 				//lcd.print("                ");
 			}
 			sprintf(buffer,"error: %3d, integral: %5d, derivative %3d, P: %6d, I: %6d, D: %6d, speed %6ld \n", error, integral, derivative, Kp*error, Ki*integral, Kd*derivative, speed);
 			itm.print(buffer);
-			sprintf(bufferLCD, "P=%3d Target:%3d", pressureArraySorted[ARRAY_SIZE/2], targetPressure);
+			sprintf(bufferLCD, "P=%3d Tgt:%3d", pressureArraySorted[ARRAY_SIZE/2], targetPressure);
 			lcd.setCursor(0,1);
 			lcd.print(bufferLCD);
 		}
@@ -304,6 +299,18 @@ int main(void) {
 				step+=1;
 				if (step>=4) {
 					step= 1;
+				}
+				if (state==STATE_AUTOMODE) {
+					lcd.setCursor(13,1);
+					lcd.print("-+" + to_string(step));
+				} else {
+					if (step>=2) {
+						lcd.setCursor(11,1);
+						lcd.print("-+" + to_string(step*5));
+					} else {
+						lcd.setCursor(11,1);
+						lcd.print("-+ " + to_string(step*5));
+					}
 				}
 			}
 		}
@@ -320,10 +327,14 @@ int main(void) {
 				if (state==STATE_AUTOMODE) {
 					state = STATE_MANUALMODE;
 					step = 1;
+					lcd.setCursor(11,1);
+					lcd.print("-+ " + to_string(step*5));
 				} else if (state==STATE_MANUALMODE) {
 					state = STATE_AUTOMODE;
 					isError = false;
 					step = 1;
+					lcd.setCursor(13,1);
+					lcd.print("-+" + to_string(step));
 				}
 			}
 		}
@@ -418,6 +429,7 @@ int main(void) {
 
 		//********************MANUAL MODE********************
 		if (state==STATE_MANUALMODE) {
+			timeCounter = 15000;
 			lcd.setCursor(0,0);
 			memset(bufferLCD, 0, sizeof(bufferLCD));
 
