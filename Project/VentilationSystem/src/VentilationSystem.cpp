@@ -270,24 +270,34 @@ int main(void) {
 		if(c != EOF) {
 			if (c == '1') {
 				step = 1;
+				printStep(state, step, lcd);
 			} else if (c == '2'){
 				step = 2;
+				printStep(state, step, lcd);
 			} else if (c == '3') {
 				step = 3;
+				printStep(state, step, lcd);
 			} else if (c == '4') {
 				step = 4;
+				printStep(state, step, lcd);
 			} else if (c == '5') {
 				step = 5;
+				printStep(state, step, lcd);
 			} else if (c == '6') {
 				step = 6;
+				printStep(state, step, lcd);
 			} else if (c == '7') {
 				step = 7;
+				printStep(state, step, lcd);
 			} else if (c == '8') {
 				step = 8;
+				printStep(state, step, lcd);
 			} else if (c == '9') {
 				step = 9;
+				printStep(state, step, lcd);
 			} else if (c == 'T') {
 				step = 10;
+				printStep(state, step, lcd);
 			} else if (c == 'X') {
 				isOff = true;
 			} else if (c == 'O') {
@@ -314,8 +324,90 @@ int main(void) {
 					error = 0;
 					lastError = 0;
 				}
+			} else if ((c == 'a')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 20;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 4000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("20");
+			} else if ((c == 'b')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 30;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 6000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("30");
+			} else if ((c == 'c')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 40;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 8000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("40");
+			} else if ((c == 'd')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 50;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 10000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("50");
+			} else if ((c == 'e')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 60;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 12000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("60");
+			} else if ((c == 'f')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 70;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 14000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("70");
+			} else if ((c == 'g')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 80;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 16000;
+					lcd.setCursor(7,1);
+				}
+
+				lcd.print("80");
+			} else if ((c == 'h')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 90;
+					lcd.setCursor(10,1);
+				} else {
+					speed = 18000;
+					lcd.setCursor(7,1);
+				}
+				lcd.print("90");
+			} else if ((c == 'i')) {
+				if (state==STATE_AUTOMODE) {
+					targetPressure = 100;
+					lcd.setCursor(9,1);
+				} else {
+					speed = 20000;
+					lcd.setCursor(6,1);
+				}
+				lcd.print("100");
 			}
-			printStep(state, step, lcd);
+
 		}
 		//********************VOICE CONTROL********************
 
