@@ -262,8 +262,7 @@ int main(void) {
 	bool isError = false, isOff = false;
 
 	timeCounter = 15000;
-	lcd.setCursor(13,1);
-	lcd.print("-+" + to_string(step));
+	printStep(state, step, lcd);
 	while (1) {
 		//********************VOICE CONTROL********************
 		c = srl.read();
@@ -304,9 +303,12 @@ int main(void) {
 				if (isOff) {
 					lcd.clear();
 				}
+				isError = false;
 				isOff = false;
+				printStep(state, step, lcd);
 			} else if (c == 'A') {
 				if (state==STATE_MANUALMODE) {
+					isError = false;
 					state = STATE_AUTOMODE;
 					lcd.clear();
 					speed = 0;
@@ -314,6 +316,7 @@ int main(void) {
 					error = 0;
 					lastError = 0;
 					timeCounter = 15000;
+					printStep(state, step, lcd);
 				}
 			} else if (c == 'M') {
 				if (state==STATE_AUTOMODE) {
@@ -323,6 +326,7 @@ int main(void) {
 					integral = 0;
 					error = 0;
 					lastError = 0;
+					printStep(state, step, lcd);
 				}
 			} else if ((c == 'a')) {
 				if (state==STATE_AUTOMODE) {
@@ -471,6 +475,7 @@ int main(void) {
 					} else if (state==STATE_MANUALMODE) {
 						timeCounter = 15000;
 						state = STATE_AUTOMODE;
+						isError = false;
 						printStep(state, step, lcd);
 					}
 				}
