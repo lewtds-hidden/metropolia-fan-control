@@ -1,0 +1,12 @@
+diff a/Project/VentilationSystem/src/VentilationSystem.cpp b/Project/VentilationSystem/src/VentilationSystem.cpp	(rejected hunks)
+@@ -31,6 +31,10 @@
+ static volatile uint32_t systicks;
+ const uint8_t STATE_START  = 0;
+ const uint8_t STATE_AUTOMODE  = 1;
++const uint8_t STATE_MANUALMODE  = 2;
++const uint8_t STATE_ERROR  = 3;
++const int16_t MARGIN = 1;
++const uint8_t ARRAY_SIZE  = 7;
+ 
+ #ifdef __cplusplus
+ extern "C" {
